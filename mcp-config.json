@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "exa": {
+      "command": "npx",
+      "args": [
+        "exa-mcp-server",
+        "--tools=web_search_exa, research_paper_search_exa, twitter_search, company_research, crawling, competition_finder"
+      ],
+      "env": {
+        "EXA_API_KEY": "${EXA_API_KEY}"
+      }
+    },
+    "gsuite": {
+      "smithery": {
+        "url": "https://server.smithery.ai/@rishipradeep-think41/gsuite-mcp/mcp",
+        "apiKey": "${SMITHERY_API_KEY}",
+        "config": {
+          "credentials": {
+            "clientId": "${GOOGLE_CLIENT_ID}",
+            "clientSecret": "${GOOGLE_CLIENT_SECRET}",
+            "refreshToken": "${setup-config.json.google.refreshToken}"
+          }
+        }
+      }
+    },
+    "slack": {
+      "smithery": {
+        "url": "https://server.smithery.ai/@KaranThink41/official-slack-mcp/mcp",
+        "apiKey": "${SMITHERY_API_KEY}",
+        "config": {
+          "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}",
+          "SLACK_TEAM_ID": "${SLACK_TEAM_ID}"
+        }
+      }
+    }
+  }
+}

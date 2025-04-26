@@ -1,0 +1,209 @@
+import express from 'express';
+import { OAuth2Client } from 'google-auth-library';
+import { TokenManager } from './tokenManager.js';
+import open from 'open';
+import { loadCredentials } from './client.js';
+const SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.compose',
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/contacts',
+    'https://www.googleapis.com/auth/contacts.other.readonly',
+    'https://www.googleapis.com/auth/contacts.readonly'
+];
+export class AuthServer {
+    constructor(oauth2Client) {
+        this.flowOAuth2Client = null; // Used specifically for the auth code flow
+        this.server = null;
+        this.authCompletedSuccessfully = false; // Flag for standalone script
+        this.baseOAuth2Client = oauth2Client;
+        this.tokenManager = new TokenManager(oauth2Client);
+        this.app = express();
+        this.portRange = { start: 3000, end: 3004 };
+        this.setupRoutes();
+    }
+    setupRoutes() {
+        this.app.get('/', (req, res) => {
+            // Generate the URL using the active flow client if available, else base
+            const clientForUrl = this.flowOAuth2Client || this.baseOAuth2Client;
+            const authUrl = clientForUrl.generateAuthUrl({
+                access_type: 'offline',
+                scope: SCOPES,
+                prompt: 'consent'
+            });
+            res.send(`<h1>Google Authentication</h1><a href="${authUrl}">Authenticate with Google</a>`);
+        });
+        this.app.get('/oauth2callback', async (req, res) => {
+            const code = req.query.code;
+            if (!code) {
+                res.status(400).send('Authorization code missing');
+                return;
+            }
+            // IMPORTANT: Use the flowOAuth2Client to exchange the code
+            if (!this.flowOAuth2Client) {
+                res.status(500).send('Authentication flow not properly initiated.');
+                return;
+            }
+            try {
+                const { tokens } = await this.flowOAuth2Client.getToken(code);
+                // Save tokens using the TokenManager (which uses the base client)
+                await this.tokenManager.saveTokens(tokens);
+                this.authCompletedSuccessfully = true;
+                // Get the path where tokens were saved
+                const configPath = this.tokenManager.getConfigPath();
+                // Send a more informative HTML response including the path
+                res.send(`
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Authentication Successful</title>
+              <style>
+                  body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f4; margin: 0; }
+                  .container { text-align: center; padding: 2em; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  h1 { color: #4CAF50; }
+                  p { color: #333; margin-bottom: 0.5em; }
+                  code { background-color: #eee; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>Authentication Successful!</h1>
+                  <p>Your authentication tokens have been saved successfully to:</p>
+                  <p><code>${configPath}</code></p>
+                  <p>You can now close this browser window.</p>
+              </div>
+          </body>
+          </html>
+        `);
+            }
+            catch (error) {
+                this.authCompletedSuccessfully = false;
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                // Send an HTML error response
+                res.status(500).send(`
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Authentication Failed</title>
+              <style>
+                  body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f4; margin: 0; }
+                  .container { text-align: center; padding: 2em; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+                  h1 { color: #F44336; }
+                  p { color: #333; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>Authentication Failed</h1>
+                  <p>An error occurred during authentication:</p>
+                  <p><code>${message}</code></p>
+                  <p>Please try again or check the server logs.</p>
+              </div>
+          </body>
+          </html>
+        `);
+            }
+        });
+    }
+    async start(openBrowser = true) {
+        if (await this.tokenManager.validateTokens()) {
+            this.authCompletedSuccessfully = true;
+            return true;
+        }
+        // Try to start the server and get the port
+        const port = await this.startServerOnAvailablePort();
+        if (port === null) {
+            this.authCompletedSuccessfully = false;
+            return false;
+        }
+        // Successfully started server on `port`. Now create the flow-specific OAuth client.
+        try {
+            const { client_id, client_secret } = await loadCredentials();
+            this.flowOAuth2Client = new OAuth2Client(client_id, client_secret, `http://localhost:${port}/oauth2callback`);
+        }
+        catch (error) {
+            // Could not load credentials, cannot proceed with auth flow
+            this.authCompletedSuccessfully = false;
+            await this.stop(); // Stop the server we just started
+            return false;
+        }
+        if (openBrowser) {
+            // Generate Auth URL using the newly created flow client
+            const authorizeUrl = this.flowOAuth2Client.generateAuthUrl({
+                access_type: 'offline',
+                scope: SCOPES,
+                prompt: 'consent'
+            });
+            await open(authorizeUrl);
+        }
+        return true; // Auth flow initiated
+    }
+    async startServerOnAvailablePort() {
+        for (let port = this.portRange.start; port <= this.portRange.end; port++) {
+            try {
+                await new Promise((resolve, reject) => {
+                    // Create a temporary server instance to test the port
+                    const testServer = this.app.listen(port, () => {
+                        this.server = testServer; // Assign to class property *only* if successful
+                        resolve();
+                    });
+                    testServer.on('error', (err) => {
+                        if (err.code === 'EADDRINUSE') {
+                            // Port is in use, close the test server and reject
+                            testServer.close(() => reject(err));
+                        }
+                        else {
+                            // Other error, reject
+                            reject(err);
+                        }
+                    });
+                });
+                return port; // Port successfully bound
+            }
+            catch (error) {
+                // Check if it's EADDRINUSE, otherwise rethrow or handle
+                if (!(error instanceof Error && 'code' in error && error.code === 'EADDRINUSE')) {
+                    // An unexpected error occurred during server start
+                    return null;
+                }
+                // EADDRINUSE occurred, loop continues
+            }
+        }
+        return null; // No port found
+    }
+    getRunningPort() {
+        if (this.server) {
+            const address = this.server.address();
+            if (typeof address === 'object' && address !== null) {
+                return address.port;
+            }
+        }
+        return null;
+    }
+    async stop() {
+        return new Promise((resolve, reject) => {
+            if (this.server) {
+                this.server.close((err) => {
+                    if (err) {
+                        reject(err);
+                    }
+                    else {
+                        this.server = null;
+                        resolve();
+                    }
+                });
+            }
+            else {
+                resolve();
+            }
+        });
+    }
+}
+//# sourceMappingURL=server.js.map
