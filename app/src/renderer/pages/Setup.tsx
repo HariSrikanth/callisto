@@ -12,6 +12,24 @@ const Setup: React.FC = () => {
   )
   const [recFilename, setRecFilename] = useState('')
   const [trFilename, setTrFilename] = useState('')
+  const [queryResult, setQueryResult] = useState('')
+  const [isQuerying, setIsQuerying] = useState(false)
+
+  const handleTestQuery = async () => {
+    setIsQuerying(true)
+    try {
+      const result = await window.Electron.ipcRenderer.testQuery()
+      if (result.success) {
+        setQueryResult(result.data || '')
+      } else {
+        setQueryResult(`Error: ${result.error}`)
+      }
+    } catch (error) {
+      setQueryResult(`Error: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsQuerying(false)
+    }
+  }
 
   const handleSelectRecordingFolder = async () => {
     const p = await window.Electron.ipcRenderer.selectFolder()
@@ -55,6 +73,21 @@ const Setup: React.FC = () => {
         <h1 className="text-2xl font-bold mb-4">
           Recording Setup
         </h1>
+
+        <div className="mb-6">
+          <button
+            onClick={handleTestQuery}
+            disabled={isQuerying}
+            className="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-md mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isQuerying ? 'Querying...' : 'Test Query: Research Cardless'}
+          </button>
+          {queryResult && (
+            <div className="mt-2 p-3 bg-gray-100 rounded-md max-h-40 overflow-y-auto">
+              <pre className="whitespace-pre-wrap text-sm">{queryResult}</pre>
+            </div>
+          )}
+        </div>
 
         <div className="mb-4">
           <label className="block font-medium mb-2">

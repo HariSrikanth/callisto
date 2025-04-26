@@ -3,7 +3,6 @@ import path from 'path';
 import readline from 'readline/promises';
 import { OAuth2Client } from 'google-auth-library';
 import { google } from 'googleapis';
-import open from 'open';
 import express from 'express';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -74,8 +73,15 @@ async function setupGoogleAuth(rl: readline.Interface): Promise<{ clientId: stri
     prompt: 'consent'
   });
 
-  console.log('\nOpening browser for Google OAuth...');
-  await open(authUrl);
+  console.log('\nTrying to open browser for Google OAuth...');
+  try {
+    const openModule = await import('open');
+    await openModule.default(authUrl);
+    console.log('Browser opened successfully!');
+  } catch (error) {
+    console.log('Failed to open browser automatically. Please open this URL manually:');
+    console.log('\n' + authUrl + '\n');
+  }
 
   // Start local server to receive the code
   const app = express();
@@ -83,7 +89,7 @@ async function setupGoogleAuth(rl: readline.Interface): Promise<{ clientId: stri
   let serverError: Error | null = null;
 
   const server = app.listen(4100, () => {
-    console.log('Waiting for OAuth callback...');
+    console.log('Waiting for OAuth callback on http://localhost:4100/code ...');
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -119,10 +125,12 @@ async function setupGoogleAuth(rl: readline.Interface): Promise<{ clientId: stri
   }
 
   // Exchange code for tokens
+  console.log('\nExchanging authorization code for tokens...');
   const { tokens } = await oauth2Client.getToken(code);
   if (!tokens.refresh_token) {
     throw new Error('No refresh token received. Please revoke application access in Google Cloud Console and try again.');
   }
+  console.log('Successfully obtained refresh token!');
 
   return {
     clientId,
@@ -225,12 +233,18 @@ async function setupCalendars(rl: readline.Interface, googleConfig: { clientId: 
 }
 
 async function saveConfig(config: SetupConfig) {
-  const configPath = path.join(process.cwd(), 'setup-config.json');
-  await fs.promises.writeFile(configPath, JSON.stringify(config, null, 2));
-  console.log('\nConfiguration saved to setup-config.json');
+  const clientDir = path.join(process.cwd(), 'src', 'client');
+  const configPath = path.join(clientDir, 'setup-config.json');
+  const envPath = path.join(clientDir, '.env');
 
-  // Also update .env file
-  const envPath = path.join(process.cwd(), '.env');
+  // Ensure client directory exists
+  await fs.promises.mkdir(clientDir, { recursive: true });
+
+  // Save setup config
+  await fs.promises.writeFile(configPath, JSON.stringify(config, null, 2));
+  console.log('\nConfiguration saved to src/client/setup-config.json');
+
+  // Update .env file
   const envContent = `
 ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}
 SMITHERY_API_KEY=${process.env.SMITHERY_API_KEY || ''}
@@ -242,7 +256,7 @@ SLACK_TEAM_ID=${config.slack.teamId}
 `.trim();
 
   await fs.promises.writeFile(envPath, envContent);
-  console.log('Environment variables saved to .env');
+  console.log('Environment variables saved to src/client/.env');
 }
 
 async function main() {

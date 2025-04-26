@@ -34,7 +34,18 @@ export class MCPClient implements MCPClientInterface {
     });
     this.mcps = new Map();
     this.toolToServerMap = new Map();
-    this.chatHistoryFile = path.join(process.cwd(), CHAT_HISTORY_FILE);
+    
+    // Try development path first
+    let chatHistoryPath = path.join(process.cwd(), 'src', 'client', CHAT_HISTORY_FILE);
+    
+    // If not found, try production path
+    if (!fs.existsSync(path.dirname(chatHistoryPath))) {
+      chatHistoryPath = path.join(process.cwd(), 'out', 'client', CHAT_HISTORY_FILE);
+      // Ensure the directory exists
+      fs.mkdirSync(path.join(process.cwd(), 'out', 'client'), { recursive: true });
+    }
+    
+    this.chatHistoryFile = chatHistoryPath;
     this.loadChatHistory();
   }
 
@@ -601,6 +612,8 @@ Send message? (Y/N)
     return responseText + "\nMaximum tool use loops reached. Returning current response.";
   }
 
+  // Commenting out interactive chat loop as it's not needed for programmatic use
+  /*
   async chatLoop(): Promise<void> {
     const rl = readline.createInterface({
       input: process.stdin,
@@ -639,6 +652,7 @@ Send message? (Y/N)
       rl.close();
     }
   }
+  */
 
   async cleanup(): Promise<void> {
     console.log("\nCleaning up MCP connections...");

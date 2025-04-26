@@ -56,6 +56,9 @@ const api: ElectronAPI = {
 
     off: (channel: string, callback: (...args: any[]) => void) => {
       ipcRenderer.removeListener(channel, callback)
+    },
+    testQuery: async () => {
+      return await ipcRenderer.invoke('test-query')
     }
   },
   path: {

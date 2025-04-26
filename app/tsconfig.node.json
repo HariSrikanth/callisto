@@ -5,10 +5,15 @@
     "src/main/*",
     "src/preload/*",
     "src/utils/*",
-    "src/renderer/micCapture.ts"
+    "src/renderer/micCapture.ts",
+    "src/client/**/*"
   ],
   "compilerOptions": {
     "composite": true,
-    "types": ["electron-vite/node"]
+    "types": ["electron-vite/node"],
+    "baseUrl": ".",
+    "paths": {
+      "@client/*": ["src/client/*"]
+    }
   }
 }

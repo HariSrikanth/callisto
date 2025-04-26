@@ -6,6 +6,7 @@ import { checkPermissions } from '../utils/permission'
 import { startRecording, stopRecording } from '../utils/recording'
 import * as dotenv from 'dotenv'
 import { writeFileSync } from 'fs'
+import { makeQuery } from '../utils/mcp'
 
 // Load environment variables from .env file
 dotenv.config({ path: join(__dirname, '../../.env') })
@@ -147,6 +148,17 @@ app.whenReady().then(async () => {
       }
     }
   })
+
+  // Handle test query
+  ipcMain.handle('test-query', async () => {
+    try {
+      const response = await makeQuery("Research the startup Cardless");
+      return { success: true, data: response };
+    } catch (error) {
+      console.error('Query error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 
   createWindow()
 

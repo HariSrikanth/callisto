@@ -21,6 +21,7 @@ export interface ElectronAPI {
     stopRecording: () => Promise<{ success: boolean; error?: string }>
     off: (channel: string, callback: (...args: any[]) => void) => void
     startMic: () => Promise<void>
+    testQuery: () => Promise<{ success: boolean; data?: string; error?: string }>
   }
   path: {
     join: (...paths: string[]) => string

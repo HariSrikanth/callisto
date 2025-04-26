@@ -13,10 +13,14 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "start": "electron-vite preview",
-    "dev:nowatch": "electron-vite dev",
+    "start": "ts-node --esm --project scripts/tsconfig.json scripts/start.ts",
+    "start:app": "electron-vite dev",
+    "setup": "ts-node --esm src/client/scripts/setup.ts",
     "dev": "electron-vite dev -w",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && npm run build:client && electron-vite build && npm run copy-configs",
+    "copy-configs": "mkdir -p out/client && cp src/client/setup-config.json src/client/mcp-config.json out/client/",
+    "build:client": "cd src/client && tsc && node --experimental-specifier-resolution=node -e \"import { promises as fs } from 'fs';import { join } from 'path';const makeExecutable=async(dir)=>{const entries=await fs.readdir(dir,{withFileTypes:true});for(const entry of entries){const fullPath=join(dir,entry.name);if(entry.isDirectory())await makeExecutable(fullPath);else if(entry.name.endsWith('.js'))await fs.chmod(fullPath,'755');}};makeExecutable('build');\"",
+    "clean:client": "rm -rf src/client/build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
@@ -75,13 +79,20 @@
     "tailwind-merge": "^2.2.1",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.0",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "@anthropic-ai/sdk": "^0.18.0",
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.3",
+    "google-auth-library": "^9.6.3",
+    "googleapis": "^133.0.0",
+    "open": "^9.1.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^2.0.0",
     "@electron-toolkit/eslint-config-ts": "^1.0.1",
     "@electron-toolkit/tsconfig": "^1.0.1",
-    "@types/node": "^18.19.9",
+    "@types/node": "^20.11.24",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
@@ -98,7 +109,12 @@
     "shadcn-ui": "^0.8.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
-    "vite": "^5.0.12"
+    "vite": "^5.0.12",
+    "@types/express": "^4.17.21",
+    "ts-node": "^10.9.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }
