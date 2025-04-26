@@ -5,15 +5,13 @@ import { MCPClient } from "./services/mcp-client.js";
 import { McpConfig, SetupConfig } from "./types/index.js";
 import { MCP_CONFIG_FILE, SETUP_CONFIG_FILE } from "./config/constants.js";
 
-// Configure dotenv to look in src/client directory
-dotenv.config({ path: path.join(process.cwd(), 'src', 'client', '.env') });
+dotenv.config();
 
 async function main() {
   // Read setup configuration first
   let setupConfig: SetupConfig;
   try {
-    const setupPath = path.join(process.cwd(), 'src', 'client', SETUP_CONFIG_FILE);
-    const setupData = fs.readFileSync(setupPath, "utf-8");
+    const setupData = fs.readFileSync(path.join(process.cwd(), SETUP_CONFIG_FILE), "utf-8");
     setupConfig = JSON.parse(setupData);
   } catch (error) {
     console.error("Failed to read or parse setup-config.json:", error);
@@ -24,8 +22,7 @@ async function main() {
   // Read MCP configuration
   let mcpConfig: McpConfig;
   try {
-    const mcpPath = path.join(process.cwd(), 'src', 'client', MCP_CONFIG_FILE);
-    const configData = fs.readFileSync(mcpPath, "utf-8");
+    const configData = fs.readFileSync(path.join(process.cwd(), MCP_CONFIG_FILE), "utf-8");
     mcpConfig = JSON.parse(configData);
   } catch (error) {
     console.error("Failed to read or parse mcp-config.json:", error);

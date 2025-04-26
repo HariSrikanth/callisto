@@ -1,6 +1,33 @@
-import { MessageParam, Tool, ToolResultBlockParam, ToolUseBlock } from "@anthropic-ai/sdk/resources/messages/messages.mjs";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
-export type { MessageParam, Tool, ToolResultBlockParam, ToolUseBlock };
+export type { MessageParam };
+
+// Tool-related type definitions based on Anthropic API
+export interface Tool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+export interface ToolResultBlockParam {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+export interface ToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  tool_name?: string;
+  parameters?: Record<string, unknown>;
+}
 
 export interface McpServerConfig {
   command?: string;
@@ -28,6 +55,7 @@ export interface GcpCredentials {
 export interface SetupConfig {
   userContext: {
     name: string;
+    email: string;
     role: string;
     company: string;
     location: string;
@@ -61,5 +89,32 @@ export interface PendingMessage {
     subject?: string;
     message: string;
   };
+  timestamp: Date;
+}
+
+export interface WorkflowState {
+  id: string;
+  type: 'search' | 'email' | 'calendar' | 'slack';
+  status: 'staging' | 'ready' | 'pending_approval' | 'completed';
+  context: {
+    messages: MessageParam[];
+    toolCalls: ToolUseBlock[];
+    results: ToolResultBlockParam[];
+  };
+  requiresApproval: boolean;
+}
+
+export interface MeetingContext {
+  companyInfo: Map<string, any>;
+  personInfo: Map<string, any>;
+  documentHistory: Map<string, any>;
+  calendarEvents: any[];
+  activeWorkflows: Map<string, WorkflowState>;
+  pendingWorkflows: Map<string, WorkflowState>;
+}
+
+export interface TranscriptChunk {
+  speaker: string;
+  content: string;
   timestamp: Date;
 } 
