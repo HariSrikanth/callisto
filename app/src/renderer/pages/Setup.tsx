@@ -74,7 +74,7 @@ const Setup: React.FC = () => {
           Recording Setup
         </h1>
 
-        <div className="mb-6">
+        {/* <div className="mb-6">
           <button
             onClick={handleTestQuery}
             disabled={isQuerying}
@@ -87,7 +87,7 @@ const Setup: React.FC = () => {
               <pre className="whitespace-pre-wrap text-sm">{queryResult}</pre>
             </div>
           )}
-        </div>
+        </div> */}
 
         <div className="mb-4">
           <label className="block font-medium mb-2">

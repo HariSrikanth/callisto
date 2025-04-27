@@ -22,11 +22,8 @@ export interface ToolResultBlockParam {
 
 export interface ToolUseBlock {
   type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  tool_name?: string;
-  parameters?: Record<string, unknown>;
+  tool_name: string;
+  parameters: Record<string, unknown>;
 }
 
 export interface McpServerConfig {
@@ -89,32 +86,5 @@ export interface PendingMessage {
     subject?: string;
     message: string;
   };
-  timestamp: Date;
-}
-
-export interface WorkflowState {
-  id: string;
-  type: 'search' | 'email' | 'calendar' | 'slack';
-  status: 'staging' | 'ready' | 'pending_approval' | 'completed';
-  context: {
-    messages: MessageParam[];
-    toolCalls: ToolUseBlock[];
-    results: ToolResultBlockParam[];
-  };
-  requiresApproval: boolean;
-}
-
-export interface MeetingContext {
-  companyInfo: Map<string, any>;
-  personInfo: Map<string, any>;
-  documentHistory: Map<string, any>;
-  calendarEvents: any[];
-  activeWorkflows: Map<string, WorkflowState>;
-  pendingWorkflows: Map<string, WorkflowState>;
-}
-
-export interface TranscriptChunk {
-  speaker: string;
-  content: string;
   timestamp: Date;
 } 

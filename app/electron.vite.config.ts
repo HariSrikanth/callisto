@@ -6,6 +6,7 @@ export default defineConfig({
   main: {
     resolve: {
       alias: {
+        '@': resolve('src'),
         '@client': resolve('src/client')
       }
     },
@@ -21,6 +22,7 @@ export default defineConfig({
   preload: {
     resolve: {
       alias: {
+        '@': resolve('src'),
         '@client': resolve('src/client')
       }
     },
@@ -29,6 +31,7 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
+        '@': resolve('src'),
         '@client': resolve('src/client'),
         '@renderer': resolve('src/renderer/src')
       }

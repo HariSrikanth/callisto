@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "example-server": {
+      "command": "python",
+      "args": [
+        "-m",
+        "your_mcp_server"
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "google": {
+    "clientId": "",
+    "clientSecret": "",
+    "refreshToken": ""
+  },
+  "slack": {
+    "botToken": "",
+    "teamId": ""
+  },
+  "userContext": {
+    "email": "",
+    "name": ""
+  }
+}

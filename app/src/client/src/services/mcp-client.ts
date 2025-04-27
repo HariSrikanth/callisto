@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline/promises';
-import { MCPClientInterface, McpConfig, MessageParam, Tool, ToolResultBlockParam, SetupConfig, PendingMessage, MeetingContext, TranscriptChunk, WorkflowState } from '../types/index.js';
+import { MCPClientInterface, McpConfig, MessageParam, Tool, ToolResultBlockParam, SetupConfig, PendingMessage } from '../types/index.js';
 import { INITIAL_SYSTEM_PROMPT, CHAT_HISTORY_FILE, GCP_SAVED_TOKENS_FILE } from '../config/constants.js';
 import { loadGcpCredentials } from '../utils/gcp.js';
 
@@ -44,8 +44,6 @@ export class MCPClient implements MCPClientInterface {
   private setupConfig: SetupConfig | null = null;
   private readonly REQUEST_TIMEOUT = 15000;
   private pendingMessages: PendingMessage[] = [];
-  private meetingContext: MeetingContext;
-  private currentPendingWorkflowId: string | null = null;
 
   constructor() {
     this.anthropic = new Anthropic({
@@ -53,30 +51,8 @@ export class MCPClient implements MCPClientInterface {
     });
     this.mcps = new Map();
     this.toolToServerMap = new Map();
-    this.cleanup()
-    
-    // Try development path first
-    let chatHistoryPath = path.join(process.cwd(), 'src', 'client', CHAT_HISTORY_FILE);
-    
-    // If not found, try production path
-    if (!fs.existsSync(path.dirname(chatHistoryPath))) {
-      chatHistoryPath = path.join(process.cwd(), 'out', 'client', CHAT_HISTORY_FILE);
-      // Ensure the directory exists
-      fs.mkdirSync(path.join(process.cwd(), 'out', 'client'), { recursive: true });
-    }
-    
-    this.chatHistoryFile = chatHistoryPath;
+    this.chatHistoryFile = path.join(process.cwd(), CHAT_HISTORY_FILE);
     this.loadChatHistory();
-    
-    // Initialize meeting context
-    this.meetingContext = {
-      companyInfo: new Map(),
-      personInfo: new Map(),
-      documentHistory: new Map(),
-      calendarEvents: [],
-      activeWorkflows: new Map(),
-      pendingWorkflows: new Map()
-    };
   }
 
   private async substituteEnvVars(value: any): Promise<any> {
@@ -151,18 +127,25 @@ export class MCPClient implements MCPClientInterface {
             content: msg.content.map((content: any) => {
               if (content.type === 'tool_use') {
                 return {
-                  type: 'tool_call',
-                  tool: content.name,
-                  input: content.input
+                  type: 'tool_use',
+                  tool_name: content.name,
+                  parameters: content.input
+                };
+              } else if (content.type === 'tool_result') {
+                return {
+                  type: 'tool_result',
+                  tool_use_id: content.tool_use_id,
+                  content: content.content,
+                  is_error: content.is_error
                 };
               } else if (content.type === 'text') {
                 return {
                   type: 'text',
-                  content: content.text
+                  text: content.text
                 };
               }
               return content;
-            }).filter(content => content !== null) // Remove any null content
+            }).filter(Boolean) // Remove any null content
           };
         }
         return msg;
@@ -341,7 +324,7 @@ export class MCPClient implements MCPClientInterface {
             const toolSchema = this.getToolSchema(serverName, tool.name, tool.inputSchema);
             allTools.push({
               name: tool.name,
-              description: tool.description,
+              description: tool.description || '',
               input_schema: toolSchema
             });
 
@@ -399,7 +382,8 @@ Send message? (Y/N)
       'post_message',
       'create_message',
       'send_notification',
-      'post_notification'
+      'post_notification',
+      'send_message_on_slack'
     ];
     return sendingTools.includes(toolName);
   }
@@ -434,7 +418,7 @@ Send message? (Y/N)
     return `Message cancelled: ${message.type === 'email' ? 'Email' : 'Slack message'} to ${message.type === 'email' ? message.content.to : message.content.channel}`;
   }
 
-  private async executeToolCall(toolName: string, toolInput: any, toolUseId: string): Promise<ToolResultBlockParam> {
+  private async executeToolCall(toolName: string, toolInput: Record<string, unknown>, toolUseId: string): Promise<ToolResultBlockParam> {
     const serverName = this.toolToServerMap.get(toolName);
     if (!serverName) {
       return {
@@ -455,47 +439,57 @@ Send message? (Y/N)
       };
     }
 
-    try {
-      // Special handling for Exa API tools
-      if (serverName === 'exa') {
-        let processedInput = { ...toolInput };
-        
-        // Handle web search
-        if (toolName === 'web_search_exa') {
-          processedInput = {
-            query: toolInput.query,
-            num_results: toolInput.numResults || 5
-          };
-        }
-        
-        // Handle company research
-        if (toolName === 'company_research') {
-          processedInput = {
-            query: toolInput.query,
-            num_results: toolInput.numResults || 5
-          };
-        }
+    // Find the tool schema
+    const toolDef = this.tools.find(t => t.name === toolName);
+    if (!toolDef) {
+      return {
+        type: "tool_result" as const,
+        tool_use_id: toolUseId,
+        content: `Error: Tool ${toolName} schema not found.`,
+        is_error: true,
+      };
+    }
 
-        const result = await mcpClient.callTool({
-          name: toolName,
-          arguments: processedInput,
-        });
-        
-        const content = typeof result.content === "string"
-          ? result.content
-          : JSON.stringify(result.content, null, 2);
-        
+    try {
+      // Validate required parameters
+      const schema = toolDef.input_schema;
+      const missingParams = schema.required?.filter(param => !(param in toolInput));
+      if (missingParams?.length) {
         return {
           type: "tool_result" as const,
           tool_use_id: toolUseId,
-          content: content as string,
+          content: `Error: Missing required parameters for ${toolName}: ${missingParams.join(', ')}`,
+          is_error: true,
         };
       }
 
-      // Handle non-Exa tools normally
+      // Special handling for Exa API tools
+      let processedInput: Record<string, unknown> = { ...toolInput };
+      if (serverName === 'exa') {
+        if (toolName === 'web_search_exa' || toolName === 'company_research') {
+          processedInput = {
+            query: toolInput.query,
+            num_results: toolInput.numResults || 5
+          };
+        }
+      }
+
+      // Special handling for Google Calendar tools
+      if (serverName === 'google-calendar' && toolName === 'create-event') {
+        // Add the user's email as an attendee if not already present
+        const attendees = (toolInput.attendees as Array<{ email: string }>) || [];
+        const userEmail = this.setupConfig?.userContext.email;
+        if (userEmail && !attendees.some(a => a.email === userEmail)) {
+          processedInput = {
+            ...toolInput,
+            attendees: [...attendees, { email: userEmail }]
+          };
+        }
+      }
+
       const result = await mcpClient.callTool({
         name: toolName,
-        arguments: toolInput,
+        arguments: processedInput,
       });
       
       const content = typeof result.content === "string"
@@ -505,10 +499,23 @@ Send message? (Y/N)
       return {
         type: "tool_result" as const,
         tool_use_id: toolUseId,
-        content: content as string,
+        content: content,
       };
     } catch (error) {
-      const errorMessage = `Error executing tool ${toolName}: ${error instanceof Error ? error.message : String(error)}`;
+      // Enhanced error handling
+      let errorMessage = `Error executing tool ${toolName}: `;
+      if (error instanceof Error) {
+        errorMessage += error.message;
+        // Log the full error for debugging
+        console.error(`Tool execution error:`, {
+          tool: toolName,
+          server: serverName,
+          error: error.stack || error.message
+        });
+      } else {
+        errorMessage += String(error);
+      }
+
       return {
         type: "tool_result" as const,
         tool_use_id: toolUseId,
@@ -529,28 +536,14 @@ Send message? (Y/N)
     const isNo = query.toLowerCase() === 'n' || query.toLowerCase() === 'no';
     
     if (isYes || isNo) {
-      if (this.currentPendingWorkflowId) {
-        await this.handleUserResponse(query);
-        return "Response processed.";
-      } else if (this.pendingMessages.length > 0) {
-        // Handle legacy message confirmation
-        const messageId = this.pendingMessages.length;
-        return isYes ? 
-          await this.handleConfirmation(messageId) : 
-          await this.handleRejection(messageId);
+      if (this.pendingMessages.length === 0) {
+        return "No pending messages to confirm or reject.";
       }
-      return "No pending actions to confirm or reject.";
-    }
-
-    // Handle transcript chunks
-    if (query.startsWith('SCREEN:') || query.startsWith('MIC:')) {
-      const [speaker, content] = query.split(':').map(s => s.trim());
-      await this.processTranscriptChunk({
-        speaker,
-        content,
-        timestamp: new Date()
-      });
-      return "Transcript chunk processed.";
+      // Always handle the most recent message
+      const messageId = this.pendingMessages.length;
+      return isYes ? 
+        this.handleConfirmation(messageId) : 
+        this.handleRejection(messageId);
     }
 
     // Regular query processing
@@ -569,7 +562,7 @@ Send message? (Y/N)
           system: INITIAL_SYSTEM_PROMPT,
           tools: this.tools,
           tool_choice: { type: 'auto' }
-        } as any);
+        } as any); // Using type assertion temporarily until SDK is updated
 
         let hasToolUse = false;
         const toolResults: ToolResultBlockParam[] = [];
@@ -580,6 +573,7 @@ Send message? (Y/N)
             currentResponseText += content.text;
           } else if (content.type === "tool_use") {
             hasToolUse = true;
+            // First assert as unknown since ContentBlock is too generic
             const toolUse = content as unknown as ToolUseBlock;
             const toolName = toolUse.name;
             const toolInput = toolUse.input;
@@ -597,6 +591,9 @@ Send message? (Y/N)
               };
               
               const stagingResponse = await this.stageMessage(message);
+              console.log(stagingResponse);
+              
+              // Return early to wait for user confirmation
               return stagingResponse;
             }
 
@@ -606,6 +603,7 @@ Send message? (Y/N)
               toolResults.push(result);
               currentResponseText += result.content;
             } catch (error) {
+              // Handle tool execution errors
               const errorResult = {
                 type: "tool_result" as const,
                 tool_use_id: toolUseId,
@@ -627,7 +625,8 @@ Send message? (Y/N)
         if (hasToolUse) {
           // Only add tool results if there are any
           if (toolResults.length > 0) {
-            this.messages.push({
+            // Add tool results to message history
+            const toolResultMessage = {
               role: "user",
               content: toolResults.map(result => ({
                 type: "tool_result",
@@ -635,7 +634,19 @@ Send message? (Y/N)
                 content: result.content,
                 is_error: result.is_error
               }))
-            } as any);
+            } as any;
+            
+            // Only add if we have matching tool uses
+            const lastAssistantMessage = this.messages[this.messages.length - 1];
+            if (lastAssistantMessage && Array.isArray(lastAssistantMessage.content)) {
+              const toolUses = lastAssistantMessage.content.filter(c => 
+                typeof c === 'object' && c !== null && 'type' in c && (c as { type: string }).type === 'tool_use'
+              ).map(c => c as unknown as ToolUseBlock);
+              
+              if (toolUses.length > 0) {
+                this.messages.push(toolResultMessage);
+              }
+            }
           }
           this.saveChatHistory();
         } else {
@@ -643,13 +654,15 @@ Send message? (Y/N)
           return responseText;
         }
       } catch (error) {
+        // Handle API errors
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error("Error processing query:", errorMessage);
         
+        // Clean up any incomplete tool calls
         if (this.messages.length > 0 && 
             this.messages[this.messages.length - 1].role === "assistant" && 
             Array.isArray(this.messages[this.messages.length - 1].content)) {
-          this.messages.pop();
+          this.messages.pop(); // Remove the last assistant message if it's incomplete
         }
         
         return `Error: ${errorMessage}`;
@@ -657,219 +670,6 @@ Send message? (Y/N)
     }
 
     return responseText + "\nMaximum tool use loops reached. Returning current response.";
-  }
-
-  async processTranscriptChunk(chunk: TranscriptChunk): Promise<void> {
-    this.messages.push({ role: "user", content: chunk.content });
-    const workflows = await this.identifyWorkflows(chunk);
-    
-    for (const workflow of workflows) {
-      if (workflow.requiresApproval) {
-        await this.stageWorkflow(workflow);
-      } else {
-        await this.executeWorkflow(workflow);
-      }
-    }
-  }
-
-  private async identifyWorkflows(chunk: TranscriptChunk): Promise<WorkflowState[]> {
-    if (this.messages.length > 0 && 
-        this.messages[this.messages.length - 1].role === "assistant" && 
-        Array.isArray(this.messages[this.messages.length - 1].content)) {
-      this.messages.pop();
-    }
-
-    const calendarKeywords = ['availability', 'schedule', 'meeting', 'call', 'appointment', 'free', 'busy'];
-    const hasCalendarQuery = calendarKeywords.some(keyword => 
-      chunk.content.toLowerCase().includes(keyword)
-    );
-
-    if (hasCalendarQuery) {
-      const now = new Date();
-      const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      
-      const calendarWorkflow: WorkflowState = {
-        id: `calendar-${Date.now()}`,
-        type: 'calendar',
-        status: 'staging',
-        context: {
-          messages: this.messages,
-          toolCalls: [{
-            type: 'tool_use',
-            id: `calendar-${Date.now()}`,
-            name: 'list-events',
-            input: {
-              timeMin: now.toISOString(),
-              timeMax: nextWeek.toISOString(),
-              maxResults: 10
-            }
-          }],
-          results: []
-        },
-        requiresApproval: false
-      };
-      
-      this.messages.push({
-        role: "assistant",
-        content: [{
-          type: "tool_use" as const,
-          id: calendarWorkflow.id,
-          name: "list-events",
-          input: calendarWorkflow.context.toolCalls[0].input
-        }]
-      } as any);
-      
-      return [calendarWorkflow];
-    }
-
-    const response = await this.anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
-      max_tokens: 2000,
-      messages: this.messages,
-      system: INITIAL_SYSTEM_PROMPT,
-      tools: this.tools,
-      tool_choice: { type: 'auto' }
-    } as any);
-
-    const workflows: WorkflowState[] = [];
-    
-    for (const content of response.content) {
-      if (typeof content === 'object' && content !== null && 'type' in content) {
-        const typedContent = content as { type: string };
-        if (typedContent.type === "tool_use") {
-          const toolUse = content as unknown as ToolUseBlock;
-          workflows.push({
-            id: toolUse.id,
-            type: this.getWorkflowType(toolUse.name),
-            status: 'staging',
-            context: {
-              messages: this.messages,
-              toolCalls: [toolUse],
-              results: []
-            },
-            requiresApproval: this.requiresConfirmation(toolUse.name)
-          });
-        }
-      }
-    }
-
-    if (workflows.length > 0) {
-      this.messages.push({ role: "assistant", content: response.content });
-    }
-    
-    return workflows;
-  }
-
-  private getWorkflowType(toolName: string): WorkflowState['type'] {
-    if (toolName.startsWith('web_search_exa') || toolName.startsWith('company_research')) {
-      return 'search';
-    } else if (toolName === 'send_email') {
-      return 'email';
-    } else if (toolName.startsWith('list-events') || toolName === 'create-event') {
-      return 'calendar';
-    } else if (toolName === 'send_message_on_slack') {
-      return 'slack';
-    }
-    return 'search';
-  }
-
-  private async executeWorkflow(workflow: WorkflowState): Promise<void> {
-    if (!workflow.requiresApproval) {
-      const result = await this.executeToolCall(
-        workflow.context.toolCalls[0].name,
-        workflow.context.toolCalls[0].input,
-        workflow.context.toolCalls[0].id
-      );
-      
-      workflow.context.results.push(result);
-      workflow.status = 'completed';
-      
-      this.messages.push({
-        role: "user",
-        content: [{
-          type: "tool_result",
-          tool_use_id: result.tool_use_id,
-          content: result.content,
-          is_error: result.is_error
-        }]
-      } as any);
-
-      await this.updateContext(workflow);
-    }
-  }
-
-  private async stageWorkflow(workflow: WorkflowState): Promise<void> {
-    const stagingResponse = await this.stageMessage({
-      type: workflow.type === 'email' ? 'email' : 'slack',
-      content: {
-        ...workflow.context.toolCalls[0].input,
-        message: workflow.type === 'email' 
-          ? String(workflow.context.toolCalls[0].input.body || '')
-          : String(workflow.context.toolCalls[0].input.message || '')
-      },
-      timestamp: new Date()
-    });
-    
-    workflow.status = 'pending_approval';
-    this.meetingContext.pendingWorkflows.set(workflow.id, workflow);
-    this.currentPendingWorkflowId = workflow.id;
-    
-    console.log(stagingResponse);
-  }
-
-  private async updateContext(workflow: WorkflowState): Promise<void> {
-    if (workflow.type === 'search') {
-      const result = workflow.context.results[0];
-      if (result && !result.is_error) {
-        try {
-          const content = JSON.parse(result.content);
-          if (content.company) {
-            this.meetingContext.companyInfo.set(content.company, content);
-          }
-          if (content.person) {
-            this.meetingContext.personInfo.set(content.person, content);
-          }
-        } catch (e) {
-          // Handle non-JSON content
-        }
-      }
-    } else if (workflow.type === 'calendar') {
-      const result = workflow.context.results[0];
-      if (result && !result.is_error) {
-        try {
-          const content = JSON.parse(result.content);
-          if (Array.isArray(content.events)) {
-            this.meetingContext.calendarEvents.push(...content.events);
-          }
-        } catch (e) {
-          // Handle non-JSON content
-        }
-      }
-    }
-  }
-
-  async handleUserResponse(response: string): Promise<void> {
-    if (this.currentPendingWorkflowId) {
-      const workflow = this.meetingContext.pendingWorkflows.get(this.currentPendingWorkflowId);
-      if (workflow) {
-        if (response.toLowerCase() === 'y' || response.toLowerCase() === 'yes') {
-          await this.executeWorkflow(workflow);
-          this.meetingContext.pendingWorkflows.delete(workflow.id);
-        } else if (response.toLowerCase() === 'n' || response.toLowerCase() === 'no') {
-          this.meetingContext.pendingWorkflows.delete(workflow.id);
-          console.log(`Workflow ${workflow.id} cancelled.`);
-        }
-        this.currentPendingWorkflowId = null;
-      }
-    }
-  }
-
-  get connectedServers(): string[] {
-    return Array.from(this.mcps.keys());
-  }
-
-  get hasPendingWorkflow(): boolean {
-    return this.currentPendingWorkflowId !== null;
   }
 
   async chatLoop(): Promise<void> {
@@ -880,7 +680,9 @@ Send message? (Y/N)
 
     try {
       console.log("\nMCP Client Started!");
-      console.log(`Connected to servers: ${this.connectedServers.join(", ")}`);
+      console.log(
+        `Connected to servers: ${Array.from(this.mcps.keys()).join(", ")}`,
+      );
       console.log("Type your queries or 'quit' to exit.");
       console.log("Type 'clear' to start a new conversation.");
 
