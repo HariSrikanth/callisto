@@ -14,6 +14,7 @@ dotenv.config();
 
 interface UserContext {
   name: string;
+  email: string;
   role: string;
   company: string;
   location: string;
@@ -134,12 +135,13 @@ async function setupGoogleAuth(rl: readline.Interface): Promise<{ clientId: stri
 async function setupUserContext(rl: readline.Interface): Promise<UserContext> {
   console.log('\n=== User Context Setup ===');
   const name = await promptUser(rl, 'What is your name? ');
+  const email = await promptUser(rl, 'What is your email? (Callisto will use this as the address to send emails and calendar events)');
   const role = await promptUser(rl, 'What is your role? ');
   const company = await promptUser(rl, 'Where do you work? ');
   const location = await promptUser(rl, 'What is your primary work location? ');
   const timezone = await promptUser(rl, 'What is your timezone? (e.g., America/Los_Angeles) ');
 
-  return { name, role, company, location, timezone };
+  return { name, email, role, company, location, timezone };
 }
 
 async function setupSlack(rl: readline.Interface): Promise<{ botToken: string; teamId: string; channels: string[] }> {

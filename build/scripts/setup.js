@@ -88,11 +88,12 @@ async function setupGoogleAuth(rl) {
 async function setupUserContext(rl) {
     console.log('\n=== User Context Setup ===');
     const name = await promptUser(rl, 'What is your name? ');
+    const email = await promptUser(rl, 'What is your email? (Callisto will use this as the address to send emails and calendar events)');
     const role = await promptUser(rl, 'What is your role? ');
     const company = await promptUser(rl, 'Where do you work? ');
     const location = await promptUser(rl, 'What is your primary work location? ');
     const timezone = await promptUser(rl, 'What is your timezone? (e.g., America/Los_Angeles) ');
-    return { name, role, company, location, timezone };
+    return { name, email, role, company, location, timezone };
 }
 async function setupSlack(rl) {
     console.log('\n=== Slack Setup ===');
@@ -172,6 +173,7 @@ async function saveConfig(config) {
     const envContent = `
 ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}
 SMITHERY_API_KEY=${process.env.SMITHERY_API_KEY || ''}
+EXA_API_KEY=${process.env.EXA_API_KEY || ''}
 GOOGLE_CLIENT_ID=${config.google.clientId}
 GOOGLE_CLIENT_SECRET=${config.google.clientSecret}
 SLACK_BOT_TOKEN=${config.slack.botToken}

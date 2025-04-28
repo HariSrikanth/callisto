@@ -92,22 +92,30 @@ export class MCPClient {
                     // Format tool responses
                     return {
                         role: 'assistant',
-                        content: msg.content.map(content => {
+                        content: msg.content.map((content) => {
                             if (content.type === 'tool_use') {
                                 return {
-                                    type: 'tool_call',
-                                    tool: content.name,
-                                    input: content.input
+                                    type: 'tool_use',
+                                    tool_name: content.name,
+                                    parameters: content.input
+                                };
+                            }
+                            else if (content.type === 'tool_result') {
+                                return {
+                                    type: 'tool_result',
+                                    tool_use_id: content.tool_use_id,
+                                    content: content.content,
+                                    is_error: content.is_error
                                 };
                             }
                             else if (content.type === 'text') {
                                 return {
                                     type: 'text',
-                                    content: content.text
+                                    text: content.text
                                 };
                             }
                             return content;
-                        }).filter(content => content !== null) // Remove any null content
+                        }).filter(Boolean) // Remove any null content
                     };
                 }
                 return msg;
@@ -271,7 +279,7 @@ export class MCPClient {
                         const toolSchema = this.getToolSchema(serverName, tool.name, tool.inputSchema);
                         allTools.push({
                             name: tool.name,
-                            description: tool.description,
+                            description: tool.description || '',
                             input_schema: toolSchema
                         });
                         // Display tool capabilities
@@ -324,7 +332,8 @@ Send message? (Y/N)
             'post_message',
             'create_message',
             'send_notification',
-            'post_notification'
+            'post_notification',
+            'send_message_on_slack'
         ];
         return sendingTools.includes(toolName);
     }
@@ -372,41 +381,53 @@ Send message? (Y/N)
                 is_error: true,
             };
         }
+        // Find the tool schema
+        const toolDef = this.tools.find(t => t.name === toolName);
+        if (!toolDef) {
+            return {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: `Error: Tool ${toolName} schema not found.`,
+                is_error: true,
+            };
+        }
         try {
-            // Special handling for Exa API tools
-            if (serverName === 'exa') {
-                let processedInput = { ...toolInput };
-                // Handle web search
-                if (toolName === 'web_search_exa') {
-                    processedInput = {
-                        query: toolInput.query,
-                        num_results: toolInput.numResults || 5
-                    };
-                }
-                // Handle company research
-                if (toolName === 'company_research') {
-                    processedInput = {
-                        query: toolInput.query,
-                        num_results: toolInput.numResults || 5
-                    };
-                }
-                const result = await mcpClient.callTool({
-                    name: toolName,
-                    arguments: processedInput,
-                });
-                const content = typeof result.content === "string"
-                    ? result.content
-                    : JSON.stringify(result.content, null, 2);
+            // Validate required parameters
+            const schema = toolDef.input_schema;
+            const missingParams = schema.required?.filter(param => !(param in toolInput));
+            if (missingParams?.length) {
                 return {
                     type: "tool_result",
                     tool_use_id: toolUseId,
-                    content: content,
+                    content: `Error: Missing required parameters for ${toolName}: ${missingParams.join(', ')}`,
+                    is_error: true,
                 };
             }
-            // Handle non-Exa tools normally
+            // Special handling for Exa API tools
+            let processedInput = { ...toolInput };
+            if (serverName === 'exa') {
+                if (toolName === 'web_search_exa' || toolName === 'company_research') {
+                    processedInput = {
+                        query: toolInput.query,
+                        num_results: toolInput.numResults || 5
+                    };
+                }
+            }
+            // Special handling for Google Calendar tools
+            if (serverName === 'google-calendar' && toolName === 'create-event') {
+                // Add the user's email as an attendee if not already present
+                const attendees = toolInput.attendees || [];
+                const userEmail = this.setupConfig?.userContext.email;
+                if (userEmail && !attendees.some(a => a.email === userEmail)) {
+                    processedInput = {
+                        ...toolInput,
+                        attendees: [...attendees, { email: userEmail }]
+                    };
+                }
+            }
             const result = await mcpClient.callTool({
                 name: toolName,
-                arguments: toolInput,
+                arguments: processedInput,
             });
             const content = typeof result.content === "string"
                 ? result.content
@@ -418,7 +439,20 @@ Send message? (Y/N)
             };
         }
         catch (error) {
-            const errorMessage = `Error executing tool ${toolName}: ${error instanceof Error ? error.message : String(error)}`;
+            // Enhanced error handling
+            let errorMessage = `Error executing tool ${toolName}: `;
+            if (error instanceof Error) {
+                errorMessage += error.message;
+                // Log the full error for debugging
+                console.error(`Tool execution error:`, {
+                    tool: toolName,
+                    server: serverName,
+                    error: error.stack || error.message
+                });
+            }
+            else {
+                errorMessage += String(error);
+            }
             return {
                 type: "tool_result",
                 tool_use_id: toolUseId,
@@ -457,8 +491,10 @@ Send message? (Y/N)
                     model: "claude-3-haiku-20240307",
                     max_tokens: 2000,
                     messages: this.messages,
+                    system: INITIAL_SYSTEM_PROMPT,
                     tools: this.tools,
-                });
+                    tool_choice: { type: 'auto' }
+                }); // Using type assertion temporarily until SDK is updated
                 let hasToolUse = false;
                 const toolResults = [];
                 let currentResponseText = "";
@@ -468,6 +504,7 @@ Send message? (Y/N)
                     }
                     else if (content.type === "tool_use") {
                         hasToolUse = true;
+                        // First assert as unknown since ContentBlock is too generic
                         const toolUse = content;
                         const toolName = toolUse.name;
                         const toolInput = toolUse.input;
@@ -478,13 +515,14 @@ Send message? (Y/N)
                                 type: toolName === 'send_email' ? 'email' : 'slack',
                                 content: {
                                     ...toolInput,
-                                    message: String(toolInput.body || toolInput.message || '')
+                                    message: toolName === 'send_email' ? String(toolInput.body || '') : String(toolInput.message || '')
                                 },
                                 timestamp: new Date()
                             };
                             const stagingResponse = await this.stageMessage(message);
-                            currentResponseText += `\n${stagingResponse}`;
-                            continue;
+                            console.log(stagingResponse);
+                            // Return early to wait for user confirmation
+                            return stagingResponse;
                         }
                         try {
                             // Execute non-message tools immediately
@@ -513,10 +551,24 @@ Send message? (Y/N)
                 if (hasToolUse) {
                     // Only add tool results if there are any
                     if (toolResults.length > 0) {
-                        this.messages.push({
+                        // Add tool results to message history
+                        const toolResultMessage = {
                             role: "user",
-                            content: toolResults,
-                        });
+                            content: toolResults.map(result => ({
+                                type: "tool_result",
+                                tool_use_id: result.tool_use_id,
+                                content: result.content,
+                                is_error: result.is_error
+                            }))
+                        };
+                        // Only add if we have matching tool uses
+                        const lastAssistantMessage = this.messages[this.messages.length - 1];
+                        if (lastAssistantMessage && Array.isArray(lastAssistantMessage.content)) {
+                            const toolUses = lastAssistantMessage.content.filter(c => typeof c === 'object' && c !== null && 'type' in c && c.type === 'tool_use').map(c => c);
+                            if (toolUses.length > 0) {
+                                this.messages.push(toolResultMessage);
+                            }
+                        }
                     }
                     this.saveChatHistory();
                 }

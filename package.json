@@ -5,7 +5,7 @@
   "main": "build/src/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc && node --experimental-specifier-resolution=node -e \"import { promises as fs } from 'fs';import { join } from 'path';const makeExecutable=async(dir)=>{const entries=await fs.readdir(dir,{withFileTypes:true});for(const entry of entries){const fullPath=join(dir,entry.name);if(entry.isDirectory())await makeExecutable(fullPath);else if(entry.name.endsWith('.js'))await fs.chmod(fullPath,'755');}};makeExecutable('build');\"",
+    "build": "tsc --noEmitOnError false && node --experimental-specifier-resolution=node -e \"import { promises as fs } from 'fs';import { join } from 'path';const makeExecutable=async(dir)=>{const entries=await fs.readdir(dir,{withFileTypes:true});for(const entry of entries){const fullPath=join(dir,entry.name);if(entry.isDirectory())await makeExecutable(fullPath);else if(entry.name.endsWith('.js'))await fs.chmod(fullPath,'755');}};makeExecutable('build');\"",
     "start": "node build/src/index.js",
     "clean": "rm -rf build",
     "prebuild": "npm run clean",
@@ -15,8 +15,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.18.0",
-    "@modelcontextprotocol/sdk": "^0.0.1",
+    "@anthropic-ai/sdk": "^0.19.0",
+    "@modelcontextprotocol/sdk": "1.10.2",
     "dotenv": "^16.4.5",
     "express": "^4.18.3",
     "google-auth-library": "^9.6.3",

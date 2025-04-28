@@ -1,5 +1,25 @@
-import { MessageParam, Tool, ToolResultBlockParam, ToolUseBlock } from "@anthropic-ai/sdk/resources/messages/messages.mjs";
-export type { MessageParam, Tool, ToolResultBlockParam, ToolUseBlock };
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+export type { MessageParam };
+export interface Tool {
+    name: string;
+    description: string;
+    input_schema: {
+        type: 'object';
+        properties: Record<string, unknown>;
+        required?: string[];
+    };
+}
+export interface ToolResultBlockParam {
+    type: 'tool_result';
+    tool_use_id: string;
+    content: string;
+    is_error?: boolean;
+}
+export interface ToolUseBlock {
+    type: 'tool_use';
+    tool_name: string;
+    parameters: Record<string, unknown>;
+}
 export interface McpServerConfig {
     command?: string;
     args?: string[];
@@ -25,6 +45,7 @@ export interface GcpCredentials {
 export interface SetupConfig {
     userContext: {
         name: string;
+        email: string;
         role: string;
         company: string;
         location: string;
